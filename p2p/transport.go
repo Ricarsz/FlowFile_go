@@ -5,14 +5,20 @@ import (
 )
 
 type Peer interface {
-	Conn()net.Conn
-	Close()error
+	Conn() net.Conn
+	Close() error
+}
+
+type RPC struct{
+	From net.Addr
+	Payload []byte
 }
 
 type Transport interface {
-	ListenAndAccept()error
-	Dial(add string)error
-	Close()error
+	ListenAndAccept() error
+	Dial(add string) error
+	Close() error
 	//监听地址
-	Addr()string
+	Addr() string
+	Cousume() <-chan RPC
 }
