@@ -11,6 +11,7 @@ type TCPTransport struct {
 	mu            sync.RWMutex
 	peers         map[net.Addr]Peer
 	rpcCh         chan RPC
+	Decoder       Decoder
 	HandshakeFunc func(Peer) error
 	OnPeer        func(Peer) error
 }
@@ -18,6 +19,7 @@ type TCPTransport struct {
 func NewTcpTransport(add string) *TCPTransport {
 	return &TCPTransport{
 		listenAddress: add,
+		Decoder:       &DefaultDecoder{},
 		rpcCh:         make(chan RPC, 1024),
 		peers:         make(map[net.Addr]Peer),
 	}
@@ -92,20 +94,25 @@ func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 		}
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	//share memory
 	t.peers[conn.RemoteAddr()] = peer
-	buffer := make([]byte, 1024)
+	t.mu.Unlock()
 	for {
-		n, err := conn.Read(buffer)
+		var rpc RPC
+		rpc.From = conn.RemoteAddr()
+		if t.Decoder == nil {
+			peer.Close()
+			return
+		}
+		err := t.Decoder.Decode(conn, &rpc)
 		if err != nil {
 			peer.Close()
 			return
 		}
-		rpc := RPC{From: conn.RemoteAddr(), Payload: buffer[:n]}
 		t.rpcCh <- rpc
 	}
 }
 
-func (t *TCPTransport) Cosume() <-chan RPC {
+func (t *TCPTransport) Consume() <-chan RPC {
 	return t.rpcCh
 }
