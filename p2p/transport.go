@@ -7,6 +7,7 @@ import (
 type Peer interface {
 	Conn() net.Conn
 	Close() error
+	Send(b []byte) error
 }
 
 type RPC struct {

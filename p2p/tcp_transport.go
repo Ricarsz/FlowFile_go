@@ -43,6 +43,10 @@ func (p *TCPPeer) Conn() net.Conn {
 func (p *TCPPeer) Close() error {
 	return p.tcp.Close()
 }
+func (p *TCPPeer) Send(b []byte) error {
+	_, err := p.tcp.Write(b)
+	return err
+}
 
 func (t *TCPTransport) Dial(add string) error {
 	conn, err := net.Dial("tcp", add)
