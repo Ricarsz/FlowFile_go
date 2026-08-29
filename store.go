@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 )
 
 type PathKey struct {
@@ -29,6 +29,32 @@ func NewStore(opts StoreOpts) *Store {
 	return &Store{opts}
 }
 
+func (s *Store) Has(key string) bool {
+	_, err := os.Stat(s.fullPath(key))
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func (s *Store) Read(key string) (int64, io.Reader, error) {
+	file, err := os.Open(s.fullPath(key))
+	if err != nil {
+		return 0, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return 0, nil, err
+	}
+	return info.Size(), file, nil
+}
+
+func (s *Store) Delete(key string) error {
+	if err := os.Remove(s.fullPath(key)); err != nil {
+		return err
+	}
+	return nil
+}
 func CASPathTransform(key string) PathKey {
 	hash := sha1.Sum([]byte(key))
 	hashStr := hex.EncodeToString(hash[:])
@@ -38,10 +64,10 @@ func CASPathTransform(key string) PathKey {
 }
 
 func (s *Store) Write(key string, r io.Reader) (int64, error) {
-	fullpath:=s.fullPath(key)
-	dir:=filepath.Dir(fullpath)
+	fullpath := s.fullPath(key)
+	dir := filepath.Dir(fullpath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return 0,err
+		return 0, err
 	}
 	file, err := os.Create(fullpath)
 	if err != nil {
@@ -52,14 +78,14 @@ func (s *Store) Write(key string, r io.Reader) (int64, error) {
 	return n, err
 }
 
-func (s *Store)fullPath(key string)string{
+func (s *Store) fullPath(key string) string {
 	var pathKey PathKey
 	if s.opts.PathTransformFunc == nil {
 		pathKey = CASPathTransform(key)
 	} else {
 		pathKey = s.opts.PathTransformFunc(key)
 	}
-	absolutePath:=s.opts.Root+"/"+pathKey.PathName
+	absolutePath := s.opts.Root + "/" + pathKey.PathName
 	fullpath := absolutePath + "/" + pathKey.FileName
 	return fullpath
 }
