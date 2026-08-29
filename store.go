@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"path/filepath"
 )
 
 type PathKey struct {
@@ -13,23 +14,18 @@ type PathKey struct {
 	FileName string
 }
 
-type PathTransformFunc func(string) PathKey
-
-type StoreOpts struct{
-	Root string
+type StoreOpts struct {
+	Root              string
 	PathTransformFunc PathTransformFunc
 }
 
-func NewStoreOpts(root string)*StoreOpts{
-	return &StoreOpts{
-		Root:root,
-	}
-}
+type PathTransformFunc func(string) PathKey
 
-type Store struct{
+type Store struct {
 	opts StoreOpts
 }
-func NewStore(opts StoreOpts)*Store{
+
+func NewStore(opts StoreOpts) *Store {
 	return &Store{opts}
 }
 
@@ -41,20 +37,29 @@ func CASPathTransform(key string) PathKey {
 		FileName: hashStr}
 }
 
-func (s *Store) Write(Key string,r io.Reader)(int64,error){
-	pathKey:=CASPathTransform(Key)
-	absolutePath:=s.opts.Root+"/"+pathKey.PathName
-	if err:=os.MkdirAll(absolutePath,0755);err!=nil{
+func (s *Store) Write(key string, r io.Reader) (int64, error) {
+	fullpath:=s.fullPath(key)
+	dir:=filepath.Dir(fullpath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return 0,err
 	}
-	fullpath:=absolutePath+"/"+pathKey.FileName
-	file,err:=os.Create(fullpath)
-	if err!=nil{
-		return 0,err
+	file, err := os.Create(fullpath)
+	if err != nil {
+		return 0, err
 	}
 	defer file.Close()
+	n, err := io.Copy(file, r)
+	return n, err
 }
 
-
-
-
+func (s *Store)fullPath(key string)string{
+	var pathKey PathKey
+	if s.opts.PathTransformFunc == nil {
+		pathKey = CASPathTransform(key)
+	} else {
+		pathKey = s.opts.PathTransformFunc(key)
+	}
+	absolutePath:=s.opts.Root+"/"+pathKey.PathName
+	fullpath := absolutePath + "/" + pathKey.FileName
+	return fullpath
+}
