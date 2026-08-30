@@ -64,10 +64,40 @@ func (s *FileServer) loop() error {
 				continue
 			}
 		} else {
-			if hdr, ok := rpc.Payload.(p2p.MessageStoreFile); ok {
+			switch hdr := rpc.Payload.(type) {
+			case p2p.MessageStoreFile:
 				s.peerLock.Lock()
 				s.pendingHeaders[rpc.From] = hdr
 				s.peerLock.Unlock()
+			case p2p.MessageGetFile:
+				if !s.store.Has(hdr.Key) {
+					continue
+				}
+				size, r, err := s.store.Read(hdr.Key)
+				if err != nil {
+					continue
+				}
+				s.peerLock.Lock()
+				peer := s.peers[rpc.From]
+				s.peerLock.Unlock()
+				if peer == nil {
+					r.Close()
+					continue
+				}
+				enc := &p2p.DefaultEncoder{}
+				if err:=enc.Encode(peer.Conn(), &p2p.RPC{Payload: p2p.MessageStoreFile{Key: hdr.Key, Size: size}});err!=nil{
+					r.Close()
+					continue
+				}
+				if err:=enc.Encode(peer.Conn(), &p2p.RPC{Stream: true, StreamSize: size});err!=nil{
+					r.Close()
+					continue
+				}
+				if _,err:=io.CopyN(peer.Conn(), r, size);err!=nil{
+					r.Close()
+					continue
+				}
+				r.Close()
 			}
 		}
 	}
@@ -89,6 +119,21 @@ func (s *FileServer) Start() error {
 	go s.fileServerOpts.Transport.ListenAndAccept()
 	s.bootstrapNetwork()
 	s.loop()
+	return nil
+}
+
+func (s *FileServer) Get(key string) error {
+	if s.store.Has(key) {
+		return nil
+	}
+	s.peerLock.Lock()
+	peersCopy := maps.Clone(s.peers)
+	s.peerLock.Unlock()
+	for _, peer := range peersCopy {
+		enc := &p2p.DefaultEncoder{}
+		rpc := &p2p.RPC{Payload: p2p.MessageGetFile{Key: key}}
+		enc.Encode(peer.Conn(), rpc)
+	}
 	return nil
 }
 

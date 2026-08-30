@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"errors"
 	"net"
 	"sync"
 )
@@ -86,6 +87,9 @@ func (t *TCPTransport) ListenAndAccept() error {
 	for {
 		conn, err := t.listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return err
+			}
 			continue
 		}
 		go t.handleConn(conn, false)
@@ -123,9 +127,9 @@ func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 			return
 		}
 		if rpc.Stream {
-			peer.wg.Add(1) 
-			t.rpcCh <- rpc 
-			peer.wg.Wait() 
+			peer.wg.Add(1)
+			t.rpcCh <- rpc
+			peer.wg.Wait()
 			continue
 		}
 		t.rpcCh <- rpc

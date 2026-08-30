@@ -37,7 +37,7 @@ func (s *Store) Has(key string) bool {
 	return true
 }
 
-func (s *Store) Read(key string) (int64, io.Reader, error) {
+func (s *Store) Read(key string) (int64, io.ReadCloser, error) {
 	file, err := os.Open(s.fullPath(key))
 	if err != nil {
 		return 0, nil, err
@@ -50,8 +50,16 @@ func (s *Store) Read(key string) (int64, io.Reader, error) {
 }
 
 func (s *Store) Delete(key string) error {
-	if err := os.Remove(s.fullPath(key)); err != nil {
+	fullPath := s.fullPath(key)
+	if err := os.Remove(fullPath); err != nil {
 		return err
+	}
+	dir := filepath.Dir(fullPath)
+	for dir != s.opts.Root && dir != "." && dir != "/" {
+		if err := os.Remove(dir); err != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
 	}
 	return nil
 }
@@ -85,7 +93,6 @@ func (s *Store) fullPath(key string) string {
 	} else {
 		pathKey = s.opts.PathTransformFunc(key)
 	}
-	absolutePath := s.opts.Root + "/" + pathKey.PathName
-	fullpath := absolutePath + "/" + pathKey.FileName
+	fullpath := filepath.Join(s.opts.Root, pathKey.PathName, pathKey.FileName)
 	return fullpath
 }
