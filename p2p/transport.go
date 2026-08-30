@@ -8,11 +8,14 @@ type Peer interface {
 	Conn() net.Conn
 	Close() error
 	Send(b []byte) error
+	CloseStream() error
 }
 
 type RPC struct {
-	From    net.Addr
+	From    string
 	Payload []byte
+	Stream  bool
+	StreamSize int64
 }
 
 type Transport interface {

@@ -39,13 +39,28 @@ func (s *FileServer) OnPeer(p p2p.Peer) error {
 }
 
 func (s *FileServer) loop() error {
-	for {
-		select {
-		case rpc := <-s.fileServerOpts.Transport.Consume():
-			s.store.Write("from_"+rpc.From.String(),
-				bytes.NewReader(rpc.Payload))
+	for rpc := range s.fileServerOpts.Transport.Consume() {
+		if rpc.Stream {
+			s.peerLock.Lock()
+			peer := s.peers[rpc.From]
+			s.peerLock.Unlock()
+			if peer == nil {
+				continue
+			}
+			reader := io.LimitReader(peer.Conn(), rpc.StreamSize)
+			_, err := s.store.Write(rpc.From, reader)
+			if err != nil {
+				peer.Close()
+				continue
+			}
+			if err := peer.CloseStream(); err != nil {
+				continue
+			}
+		} else {
+			s.store.Write(rpc.From, bytes.NewReader(rpc.Payload))
 		}
 	}
+	return nil
 }
 
 func (s *FileServer) bootstrapNetwork() error {
