@@ -21,7 +21,6 @@ type MessageGetFile struct {
 	Key string
 }
 
-
-type Message struct{
+type Message struct {
 	Payload interface{}
 }

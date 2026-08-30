@@ -13,7 +13,7 @@ type Peer interface {
 
 type RPC struct {
 	From    string
-	Payload []byte
+	Payload interface{}
 	Stream  bool
 	StreamSize int64
 }

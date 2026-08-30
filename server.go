@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"maps"
 	"sync"
 
 	"github.com/Ricarse/fileFlowSystem/p2p"
@@ -12,6 +13,7 @@ type FileServer struct {
 	fileServerOpts FileServerOpts
 	store          *Store
 	peers          map[string]p2p.Peer
+	pendingHeaders map[string]p2p.MessageStoreFile
 	peerLock       sync.Mutex
 }
 
@@ -20,7 +22,8 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 		fileServerOpts: opts,
 		store: NewStore(StoreOpts{Root: opts.StorageRoot,
 			PathTransformFunc: opts.PathTransformFunc}),
-		peers: make(map[string]p2p.Peer),
+		peers:          make(map[string]p2p.Peer),
+		pendingHeaders: make(map[string]p2p.MessageStoreFile),
 	}
 }
 
@@ -42,22 +45,30 @@ func (s *FileServer) loop() error {
 	for rpc := range s.fileServerOpts.Transport.Consume() {
 		if rpc.Stream {
 			s.peerLock.Lock()
+			hdr, ok := s.pendingHeaders[rpc.From]
 			peer := s.peers[rpc.From]
 			s.peerLock.Unlock()
-			if peer == nil {
+			if !ok || peer == nil {
 				continue
 			}
-			reader := io.LimitReader(peer.Conn(), rpc.StreamSize)
-			_, err := s.store.Write(rpc.From, reader)
+			reader := io.LimitReader(peer.Conn(), hdr.Size)
+			_, err := s.store.Write(hdr.Key, reader)
 			if err != nil {
 				peer.Close()
 				continue
 			}
+			s.peerLock.Lock()
+			delete(s.pendingHeaders, rpc.From)
+			s.peerLock.Unlock()
 			if err := peer.CloseStream(); err != nil {
 				continue
 			}
 		} else {
-			s.store.Write(rpc.From, bytes.NewReader(rpc.Payload))
+			if hdr, ok := rpc.Payload.(p2p.MessageStoreFile); ok {
+				s.peerLock.Lock()
+				s.pendingHeaders[rpc.From] = hdr
+				s.peerLock.Unlock()
+			}
 		}
 	}
 	return nil
@@ -73,15 +84,6 @@ func (s *FileServer) bootstrapNetwork() error {
 	return nil
 }
 
-func (s *FileServer) broadcastNetwork(key string, b []byte) error {
-	for _, peer := range s.peers {
-		if err := peer.Send(b); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *FileServer) Start() error {
 	s.fileServerOpts.Transport.OnPeer = s.OnPeer
 	go s.fileServerOpts.Transport.ListenAndAccept()
@@ -91,13 +93,30 @@ func (s *FileServer) Start() error {
 }
 
 func (s *FileServer) Store(key string, r io.Reader) error {
-	b, _ := io.ReadAll(r)
-	_, err := s.store.Write(key, bytes.NewReader(b))
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
-	if err := s.broadcastNetwork(key, b); err != nil {
+	size := int64(len(b))
+	if _, err := s.store.Write(key, bytes.NewReader(b)); err != nil {
 		return err
+	}
+	s.peerLock.Lock()
+	peersCopy := maps.Clone(s.peers)
+	s.peerLock.Unlock()
+	for _, peer := range peersCopy {
+		enc := &p2p.DefaultEncoder{}
+		hdrRPC := &p2p.RPC{Payload: p2p.MessageStoreFile{Key: key, Size: size}}
+		if err := enc.Encode(peer.Conn(), hdrRPC); err != nil {
+			continue
+		}
+		streamRPC := &p2p.RPC{Stream: true, StreamSize: size}
+		if err := enc.Encode(peer.Conn(), streamRPC); err != nil {
+			continue
+		}
+		if _, err := io.CopyN(peer.Conn(), bytes.NewReader(b), size); err != nil {
+			continue
+		}
 	}
 	return nil
 }
