@@ -1,7 +1,9 @@
 package p2p
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"net"
 	"sync"
 )
@@ -32,6 +34,7 @@ type TCPPeer struct {
 	tcp      net.Conn
 	outbound bool
 	wg       *sync.WaitGroup
+	br *bufio.Reader
 }
 
 func NewTCPPeer(tcp net.Conn, outbound bool) *TCPPeer {
@@ -39,11 +42,16 @@ func NewTCPPeer(tcp net.Conn, outbound bool) *TCPPeer {
 		tcp:      tcp,
 		outbound: outbound,
 		wg:       &sync.WaitGroup{},
+		br:       bufio.NewReader(tcp),
 	}
 }
 
 func (p *TCPPeer) Conn() net.Conn {
 	return p.tcp
+}
+
+func (p *TCPPeer) Reader() io.Reader {
+	return p.br
 }
 
 func (p *TCPPeer) Close() error {
@@ -80,12 +88,16 @@ func (t *TCPTransport) Addr() string {
 	return t.listenAddress
 }
 
-func (t *TCPTransport) ListenAndAccept() error {
-	listener, err := net.Listen("tcp", t.listenAddress)
+func (t *TCPTransport) Listen() error {
+	listener, err := net.Listen("tcp", t.Addr())
 	if err != nil {
 		return err
 	}
 	t.listener = listener
+	return nil
+}
+
+func (t *TCPTransport) AcceptLoop() error {
 	for {
 		conn, err := t.listener.Accept()
 		if err != nil {
@@ -96,6 +108,14 @@ func (t *TCPTransport) ListenAndAccept() error {
 		}
 		go t.handleConn(conn, false)
 	}
+}
+
+func (t *TCPTransport) ListenAndAccept() error {
+	if err := t.Listen(); err != nil {
+		return err
+	}
+	t.AcceptLoop()
+	return nil
 }
 
 func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
@@ -123,7 +143,7 @@ func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 			peer.Close()
 			return
 		}
-		err := t.Decoder.Decode(conn, &rpc)
+		err := t.Decoder.Decode(peer.Reader(), &rpc)
 		if err != nil {
 			peer.Close()
 			return

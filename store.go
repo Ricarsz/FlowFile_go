@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type PathKey struct {
@@ -22,14 +23,17 @@ type StoreOpts struct {
 type PathTransformFunc func(string) PathKey
 
 type Store struct {
+	mu   sync.RWMutex
 	opts StoreOpts
 }
 
 func NewStore(opts StoreOpts) *Store {
-	return &Store{opts}
+	return &Store{opts: opts}
 }
 
 func (s *Store) Has(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	_, err := os.Stat(s.fullPath(key))
 	if err != nil {
 		return false
@@ -38,18 +42,23 @@ func (s *Store) Has(key string) bool {
 }
 
 func (s *Store) Read(key string) (int64, io.ReadCloser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	file, err := os.Open(s.fullPath(key))
 	if err != nil {
 		return 0, nil, err
 	}
 	info, err := file.Stat()
 	if err != nil {
+		file.Close()
 		return 0, nil, err
 	}
 	return info.Size(), file, nil
 }
 
 func (s *Store) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	fullPath := s.fullPath(key)
 	if err := os.Remove(fullPath); err != nil {
 		return err
@@ -71,27 +80,25 @@ func CASPathTransform(key string) PathKey {
 		FileName: hashStr}
 }
 
-func (s *Store) Write(key string, r io.Reader) (int64, error) {
+func (s *Store) Write(key string, r io.Reader) (n int64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	fullpath := s.fullPath(key)
 	dir := filepath.Dir(fullpath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return 0, err
 	}
 	file, err := os.Create(fullpath)
+	if err != nil {
+		return 0, err
+	}
 	defer func() {
 		if cerr := file.Close(); err == nil {
 			err = cerr
 		}
 	}()
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-	n, err := io.Copy(file, r)
-	if n > 0 && err != nil {
-		return n,err
-	}
-	return 0,nil
+	n, err = io.Copy(file, r)
+	return
 }
 
 func (s *Store) fullPath(key string) string {

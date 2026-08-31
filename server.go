@@ -8,6 +8,7 @@ import (
 	"maps"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/Ricarse/fileFlowSystem/p2p"
 )
@@ -18,6 +19,7 @@ type FileServer struct {
 	peers          map[string]p2p.Peer
 	pendingHeaders map[string]p2p.MessageStoreFile
 	peerLock       sync.Mutex
+	pendingGets    map[string]chan struct{}
 }
 
 func NewFileServer(opts FileServerOpts) *FileServer {
@@ -27,6 +29,7 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 			PathTransformFunc: opts.PathTransformFunc}),
 		peers:          make(map[string]p2p.Peer),
 		pendingHeaders: make(map[string]p2p.MessageStoreFile),
+		pendingGets:    make(map[string]chan struct{}),
 	}
 }
 
@@ -59,13 +62,25 @@ func (s *FileServer) loop() error {
 			if !ok || peer == nil {
 				continue
 			}
-			reader := io.LimitReader(peer.Conn(), hdr.Size)
+			reader := io.LimitReader(peer.Reader(), hdr.Size)
 			_, err := s.store.Write(hdr.Key, reader)
 			if err != nil {
+				s.peerLock.Lock()
+				if ch, ok := s.pendingGets[hdr.Key]; ok {
+					close(ch)
+					delete(s.pendingGets, hdr.Key)
+				}
+				delete(s.pendingHeaders, rpc.From)
+				s.peerLock.Unlock()
+				peer.CloseStream()
 				peer.Close()
 				continue
 			}
 			s.peerLock.Lock()
+			if ch, ok := s.pendingGets[hdr.Key]; ok {
+				close(ch)
+				delete(s.pendingGets, hdr.Key)
+			}
 			delete(s.pendingHeaders, rpc.From)
 			s.peerLock.Unlock()
 			if err := peer.CloseStream(); err != nil {
@@ -129,17 +144,22 @@ func (s *FileServer) bootstrapNetwork() error {
 		if addr == "" {
 			continue
 		}
-		go func(a string) { s.fileServerOpts.Transport.Dial(a) }(addr)
+		go func(a string) {
+			if err := s.fileServerOpts.Transport.Dial(a); err != nil {
+			}
+		}(addr)
 	}
 	return nil
 }
 
 func (s *FileServer) Start() error {
 	s.fileServerOpts.Transport.OnPeer = s.OnPeer
-	go s.fileServerOpts.Transport.ListenAndAccept()
+	if err := s.fileServerOpts.Transport.Listen(); err != nil {
+		return err
+	}
+	go s.fileServerOpts.Transport.AcceptLoop()
 	s.bootstrapNetwork()
-	s.loop()
-	return nil
+	return s.loop()
 }
 
 func (s *FileServer) Has(key string) bool {
@@ -158,14 +178,27 @@ func (s *FileServer) Get(key string) error {
 	if s.store.Has(key) {
 		return nil
 	}
+	ch := make(chan struct{})
 	s.peerLock.Lock()
+	s.pendingGets[key] = ch
 	peersCopy := maps.Clone(s.peers)
 	s.peerLock.Unlock()
 	for _, peer := range peersCopy {
 		rpc := &p2p.RPC{Payload: p2p.MessageGetFile{Key: key}}
 		s.fileServerOpts.Transport.Encoder.Encode(peer.Conn(), rpc)
 	}
-	return nil
+	select {
+	case <-ch:
+		return nil
+	case <-time.After(2 * time.Second):
+		s.peerLock.Lock()
+		delete(s.pendingGets, key)
+		s.peerLock.Unlock()
+		if s.store.Has(key) {
+			return nil
+		}
+		return io.ErrUnexpectedEOF
+	}
 }
 
 func (s *FileServer) Store(key string, r io.Reader) error {

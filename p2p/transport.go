@@ -1,20 +1,22 @@
 package p2p
 
 import (
+	"io"
 	"net"
 )
 
 type Peer interface {
 	Conn() net.Conn
+	Reader() io.Reader
 	Close() error
 	Send(b []byte) error
 	CloseStream() error
 }
 
 type RPC struct {
-	From    string
-	Payload interface{}
-	Stream  bool
+	From       string
+	Payload    interface{}
+	Stream     bool
 	StreamSize int64
 }
 

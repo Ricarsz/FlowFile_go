@@ -9,7 +9,9 @@ import (
 )
 
 func main() {
-	tr := p2p.NewTcpTransport(":3000")
+	p2pAddr := ":3000"
+	httpAddr := ":8080"
+	tr := p2p.NewTcpTransport(p2pAddr)
 
 	opts := FileServerOpts{
 		StorageRoot:       "./data",
@@ -20,13 +22,12 @@ func main() {
 
 	s := NewFileServer(opts)
 
-	// HTTP (Echo) on :8080
 	e := echo.New()
 	h := handler.New(s)
 	h.Register(e)
 	go func() {
-		log.Printf("http listening on :8080")
-		if err := e.Start(":8080"); err != nil {
+		log.Printf("http listening on %s", httpAddr)
+		if err := e.Start(httpAddr); err != nil {
 			log.Printf("http stopped: %v", err)
 		}
 	}()
