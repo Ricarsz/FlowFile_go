@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -50,6 +51,12 @@ func (h *Handler) Get(c echo.Context) error {
 		if err := h.fs.Get(key); err != nil {
 			return c.String(http.StatusInternalServerError, err.Error())
 		}
+		for i := 0; i < 3; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if h.fs.Has(key) {
+				break
+			}
+		}
 		if !h.fs.Has(key) {
 			return c.String(http.StatusNotFound, "not found "+key)
 		}
@@ -69,10 +76,10 @@ func (h *Handler) Delete(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "missing key")
 	}
 	if !h.fs.Has(key) {
-		return c.String(http.StatusNotFound, "not found"+key)
+		return c.String(http.StatusNotFound, "not found "+key)
 	}
-	if err:=h.fs.Delete(key);err!=nil{
-		return c.String(http.StatusBadRequest, "err")
+	if err := h.fs.Delete(key); err != nil {
+		return c.String(http.StatusInternalServerError, err.Error())
 	}
-	return c.String(http.StatusNotImplemented, "todo")
+	return c.NoContent(http.StatusNoContent)
 }

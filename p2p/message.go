@@ -8,9 +8,14 @@ const (
 )
 
 func init() {
+	gob.Register(MessagePeerList{})
 	gob.Register(MessageStoreFile{})
 	gob.Register(MessageGetFile{})
 	gob.Register(Message{})
+}
+
+type MessagePeerList struct {
+	Addrs []string
 }
 
 type MessageStoreFile struct {

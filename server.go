@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"io"
 	"maps"
+	"sort"
 	"sync"
 
 	"github.com/Ricarse/fileFlowSystem/p2p"
@@ -36,8 +39,13 @@ type FileServerOpts struct {
 
 func (s *FileServer) OnPeer(p p2p.Peer) error {
 	s.peerLock.Lock()
-	defer s.peerLock.Unlock()
 	s.peers[p.Conn().RemoteAddr().String()] = p
+	addrs := make([]string, 0, len(s.peers))
+	for k := range s.peers {
+		addrs = append(addrs, k)
+	}
+	s.peerLock.Unlock()
+	s.fileServerOpts.Transport.Encoder.Encode(p.Conn(), &p2p.RPC{Payload: p2p.MessagePeerList{Addrs: addrs}})
 	return nil
 }
 
@@ -98,6 +106,18 @@ func (s *FileServer) loop() error {
 					continue
 				}
 				r.Close()
+			case p2p.MessagePeerList:
+				for _, addr := range hdr.Addrs {
+					if addr == s.fileServerOpts.Transport.Addr() {
+						continue
+					}
+					s.peerLock.Lock()
+					_, ok := s.peers[addr]
+					s.peerLock.Unlock()
+					if !ok {
+						go s.fileServerOpts.Transport.Dial(addr)
+					}
+				}
 			}
 		}
 	}
@@ -160,7 +180,8 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 	s.peerLock.Lock()
 	peersCopy := maps.Clone(s.peers)
 	s.peerLock.Unlock()
-	for _, peer := range peersCopy {
+	replicas := s.pickReplicas(key, 3, peersCopy)
+	for _, peer := range replicas {
 		hdrRPC := &p2p.RPC{Payload: p2p.MessageStoreFile{Key: key, Size: size}}
 		if err := s.fileServerOpts.Transport.Encoder.Encode(peer.Conn(), hdrRPC); err != nil {
 			continue
@@ -174,4 +195,30 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 		}
 	}
 	return nil
+}
+
+func (s *FileServer) pickReplicas(key string, n int, peers map[string]p2p.Peer) map[string]p2p.Peer {
+	if len(peers) == 0 {
+		return nil
+	}
+	addrs := make([]string, 0, len(peers))
+	for k := range peers {
+		addrs = append(addrs, k)
+	}
+	sort.Strings(addrs)
+	sum := sha1.Sum([]byte(key))
+	h := hex.EncodeToString(sum[:])
+	idx := sort.Search(len(addrs), func(i int) bool { return addrs[i] >= h })
+	if idx == len(addrs) {
+		idx = 0
+	}
+	if n > len(addrs) {
+		n = len(addrs)
+	}
+	out := make(map[string]p2p.Peer, n)
+	for i := 0; i < n; i++ {
+		addr := addrs[(idx+i)%len(addrs)]
+		out[addr] = peers[addr]
+	}
+	return out
 }
