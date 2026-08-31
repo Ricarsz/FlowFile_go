@@ -13,6 +13,7 @@ type TCPTransport struct {
 	peers         map[net.Addr]Peer
 	rpcCh         chan RPC
 	Decoder       Decoder
+	Encoder       Encoder
 	HandshakeFunc func(Peer) error
 	OnPeer        func(Peer) error
 }
@@ -21,6 +22,7 @@ func NewTcpTransport(add string) *TCPTransport {
 	return &TCPTransport{
 		listenAddress: add,
 		Decoder:       &DefaultDecoder{},
+		Encoder:       &DefaultEncoder{},
 		rpcCh:         make(chan RPC, 1024),
 		peers:         make(map[net.Addr]Peer),
 	}

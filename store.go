@@ -78,12 +78,20 @@ func (s *Store) Write(key string, r io.Reader) (int64, error) {
 		return 0, err
 	}
 	file, err := os.Create(fullpath)
+	defer func() {
+		if cerr := file.Close(); err == nil {
+			err = cerr
+		}
+	}()
 	if err != nil {
 		return 0, err
 	}
 	defer file.Close()
 	n, err := io.Copy(file, r)
-	return n, err
+	if n > 0 && err != nil {
+		return n,err
+	}
+	return 0,nil
 }
 
 func (s *Store) fullPath(key string) string {

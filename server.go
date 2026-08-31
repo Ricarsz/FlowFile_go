@@ -85,15 +85,15 @@ func (s *FileServer) loop() error {
 					continue
 				}
 				enc := &p2p.DefaultEncoder{}
-				if err:=enc.Encode(peer.Conn(), &p2p.RPC{Payload: p2p.MessageStoreFile{Key: hdr.Key, Size: size}});err!=nil{
+				if err := enc.Encode(peer.Conn(), &p2p.RPC{Payload: p2p.MessageStoreFile{Key: hdr.Key, Size: size}}); err != nil {
 					r.Close()
 					continue
 				}
-				if err:=enc.Encode(peer.Conn(), &p2p.RPC{Stream: true, StreamSize: size});err!=nil{
+				if err := enc.Encode(peer.Conn(), &p2p.RPC{Stream: true, StreamSize: size}); err != nil {
 					r.Close()
 					continue
 				}
-				if _,err:=io.CopyN(peer.Conn(), r, size);err!=nil{
+				if _, err := io.CopyN(peer.Conn(), r, size); err != nil {
 					r.Close()
 					continue
 				}
@@ -122,6 +122,18 @@ func (s *FileServer) Start() error {
 	return nil
 }
 
+func (s *FileServer) Has(key string) bool {
+	return s.store.Has(key)
+}
+
+func (s *FileServer) Read(key string) (int64, io.ReadCloser, error) {
+	return s.store.Read(key)
+}
+
+func (s *FileServer) Delete(key string) error {
+	return s.store.Delete(key)
+}
+
 func (s *FileServer) Get(key string) error {
 	if s.store.Has(key) {
 		return nil
@@ -130,9 +142,8 @@ func (s *FileServer) Get(key string) error {
 	peersCopy := maps.Clone(s.peers)
 	s.peerLock.Unlock()
 	for _, peer := range peersCopy {
-		enc := &p2p.DefaultEncoder{}
 		rpc := &p2p.RPC{Payload: p2p.MessageGetFile{Key: key}}
-		enc.Encode(peer.Conn(), rpc)
+		s.fileServerOpts.Transport.Encoder.Encode(peer.Conn(), rpc)
 	}
 	return nil
 }
@@ -150,13 +161,12 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 	peersCopy := maps.Clone(s.peers)
 	s.peerLock.Unlock()
 	for _, peer := range peersCopy {
-		enc := &p2p.DefaultEncoder{}
 		hdrRPC := &p2p.RPC{Payload: p2p.MessageStoreFile{Key: key, Size: size}}
-		if err := enc.Encode(peer.Conn(), hdrRPC); err != nil {
+		if err := s.fileServerOpts.Transport.Encoder.Encode(peer.Conn(), hdrRPC); err != nil {
 			continue
 		}
 		streamRPC := &p2p.RPC{Stream: true, StreamSize: size}
-		if err := enc.Encode(peer.Conn(), streamRPC); err != nil {
+		if err := s.fileServerOpts.Transport.Encoder.Encode(peer.Conn(), streamRPC); err != nil {
 			continue
 		}
 		if _, err := io.CopyN(peer.Conn(), bytes.NewReader(b), size); err != nil {
